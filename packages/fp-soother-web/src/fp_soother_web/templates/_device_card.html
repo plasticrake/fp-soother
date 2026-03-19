@@ -1,0 +1,28 @@
+<div
+  class="device-card"
+  id="device-card-{{ device.address }}"
+  {% if device.connecting %}
+    hx-get="/devices/{{ device.address }}/card"
+    hx-trigger="load delay:2s"
+    hx-swap="outerHTML"
+  {% endif %}
+>
+  <h2><a href="/devices/{{ device.address }}">{{ device.address }}</a></h2>
+  {% if device.connecting %}
+    <p class="status">Connecting&hellip;</p>
+  {% elif device.connected %}
+    <p class="status status-ok">Connected</p>
+    {% if device.state %}
+      <p>{{ "Playing" if device.state.play_mode else "Stopped" }} · Volume {{ device.state.volume_level }}</p>
+    {% endif %}
+  {% else %}
+    <p class="status status-error">Offline{% if device.error %}: {{ device.error }}{% endif %}</p>
+    <form hx-post="/devices/{{ device.address }}/reconnect" hx-target="#device-card-{{ device.address }}" hx-swap="outerHTML">
+      <button type="submit">Reconnect</button>
+    </form>
+  {% endif %}
+  <form hx-post="/devices/{{ device.address }}/forget" hx-confirm="Forget this device's pairing?">
+    <button type="submit">Forget</button>
+  </form>
+</div>
+

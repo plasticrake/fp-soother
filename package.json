@@ -1,0 +1,12 @@
+{
+  "name": "fp-soother",
+  "private": true,
+  "scripts": {
+    "format": "prettier --write \"**/*.{json,md,toml,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{json,md,toml,yml,yaml}\""
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6",
+    "prettier-plugin-toml": "^2.0.6"
+  }
+}

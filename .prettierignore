@@ -1,0 +1,7 @@
+.mypy_cache/
+.ruff_cache/
+.venv/
+**/.pytest_cache/
+node_modules/
+pnpm-lock.yaml
+uv.lock

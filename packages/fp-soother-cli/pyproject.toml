@@ -1,0 +1,52 @@
+[project]
+name = "fp-soother-cli"
+version = "0.1.0"
+description = "Command-line interface for fp-soother"
+readme = "README.md"
+authors = [{ name = "Patrick Seal", email = "code@plasticrake.com" }]
+requires-python = ">=3.14.7"
+dependencies = ["click>=8.5.0", "fp-soother-lib", "fp-soother-util"]
+keywords = ["cli", "command-line", "fisher-price", "smart connect", "soother"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python",
+  "Topic :: System :: Hardware",
+  "Typing :: Typed",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+[project.scripts]
+fp-soother-cli = "fp_soother_cli.cli:main"
+
+[project.urls]
+homepage = "https://github.com/plasticrake/fp-soother"
+repository = "https://github.com/plasticrake/fp-soother"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["ruff>=0.16.6", "ty>=0.0.79"]
+
+[tool.ruff.lint]
+preview = true
+select = [
+  "correctness",
+  "suspicious",
+  "complexity",
+  "performance",
+  "style",
+  "security",
+]
+
+[tool.uv.sources]
+fp-soother-lib = { workspace = true }
+fp-soother-util = { workspace = true }

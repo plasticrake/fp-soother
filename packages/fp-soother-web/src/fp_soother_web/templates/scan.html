@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Scan - Soother{% endblock %}
+{% block content %}
+  <h1>Scan for Devices</h1>
+  {% if error %}<p class="status status-error">{{ error }}</p>{% endif %}
+  <form hx-post="/scan" hx-target="body">
+    <button type="submit">Scan (10s)</button>
+  </form>
+
+  {% if results is not none %}
+    {% if not results %}
+      <p>No soothers found nearby.</p>
+    {% else %}
+      <ul class="scan-results">
+        {% for result in results %}
+          <li>
+            <span>{{ result.name or "(unknown)" }} &mdash; {{ result.address }} ({{ result.rssi }} dBm)</span>
+            <form hx-post="/devices/pair" hx-target="body">
+              <input type="hidden" name="address" value="{{ result.address }}" />
+              <button type="submit">Pair</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endif %}
+{% endblock %}

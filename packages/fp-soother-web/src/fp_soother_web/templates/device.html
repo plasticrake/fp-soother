@@ -1,0 +1,276 @@
+{# spellchecker:words endmacro #}
+{% extends "base.html" %}
+{% block title %}{{ device.address if device else "Device" }} - Soother{% endblock %}
+{% block content %}
+  {% if not device %}
+    <p>Unknown device. <a href="/">Back to devices</a></p>
+  {% else %}
+    <h1>{{ device.address }}</h1>
+    {% if device.connecting %}
+      <meta http-equiv="refresh" content="2">
+      <p class="status">Connecting&hellip;</p>
+    {% elif not device.connected %}
+      <p class="status status-error">Offline{% if device.error %}: {{ device.error }}{% endif %}</p>
+      <form hx-post="/devices/{{ device.address }}/reconnect" hx-target="body">
+        <button type="submit">Reconnect</button>
+      </form>
+    {% else %}
+      <div class="presets-bar">
+        <h3>Presets</h3>
+        {% for slot in preset_slots %}
+          <div class="preset-slot">
+            <span>Preset {{ slot }}{% if slot in presets %} (saved){% else %} (empty){% endif %}</span>
+            <form hx-post="/devices/{{ device.address }}/presets/{{ slot }}/save" hx-target="body">
+              <button type="submit">Save current settings</button>
+            </form>
+            <form hx-post="/devices/{{ device.address }}/presets/{{ slot }}/send" hx-target="body">
+              <button type="submit" {% if slot not in presets %}disabled{% endif %}>Send to device</button>
+            </form>
+          </div>
+        {% endfor %}
+        <p class="hint">Presets use an experimental composite command -- if sending one has no effect, use the individual controls below instead.</p>
+      </div>
+
+      <div class="device-layout">
+        <div class="controls-column">
+          <div class="tabs" role="tablist">
+            {% for tab_id, tab_label in tabs %}
+              <button type="button" class="tab-button" data-tab="{{ tab_id }}" role="tab">{{ tab_label }}</button>
+            {% endfor %}
+          </div>
+
+          {% macro render_control(field, control, disabled=false, enables_with=none, enables_value=none, id_suffix="") %}
+            <div class="control {% if disabled %}control-disabled{% endif %}" {% if enables_with %}data-enables-with="{{ enables_with }}"{% endif %} {% if enables_value is not none %}data-enables-value="{{ enables_value }}"{% endif %}>
+              <label for="ctrl-{{ field }}{{ id_suffix }}">{{ control.label }}</label>
+              {% if control.kind == "bool" %}
+                <input
+                  id="ctrl-{{ field }}{{ id_suffix }}"
+                  data-field="{{ field }}"
+                  type="checkbox"
+                  {% if device.state[field] %}checked{% endif %}
+                  {% if disabled %}disabled{% endif %}
+                  hx-post="/devices/{{ device.address }}/control/{{ field }}"
+                  hx-target="body"
+                  hx-vals='js:{value: event.target.checked}'
+                />
+              {% elif control.kind == "select" %}
+                <select
+                  id="ctrl-{{ field }}{{ id_suffix }}"
+                  data-field="{{ field }}"
+                  {% if disabled %}disabled{% endif %}
+                  hx-post="/devices/{{ device.address }}/control/{{ field }}"
+                  hx-target="#state-panel"
+                  hx-vals='js:{value: event.target.value}'
+                >
+                  {% for option in control.options %}
+                    <option value="{{ option.value }}" {% if device.state[field] == option.value %}selected{% endif %}>{{ option.label }}</option>
+                  {% endfor %}
+                </select>
+              {% elif control.kind == "bitmask" %}
+                <div class="bitmask-options" data-bitmask-group="{{ field }}{{ id_suffix }}">
+                  {% for option in control.options %}
+                    <label class="bitmask-option">
+                      <input
+                        type="checkbox"
+                        value="{{ option.value }}"
+                        {% if device.state[field] is not none and ((device.state[field] // option.value) % 2) == 1 %}checked{% endif %}
+                        {% if disabled %}disabled{% endif %}
+                        hx-post="/devices/{{ device.address }}/control/{{ field }}"
+                        hx-target="#state-panel"
+                        hx-vals="js:{value: [...document.querySelectorAll('[data-bitmask-group=&quot;{{ field }}{{ id_suffix }}&quot;] input')].filter(c=>c.checked).reduce((sum,c)=>sum+ +c.value,0)}"
+                      />
+                      {{ option.label }}
+                    </label>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <input
+                  id="ctrl-{{ field }}{{ id_suffix }}"
+                  data-field="{{ field }}"
+                  type="range"
+                  min="{{ control.minimum }}"
+                  max="{{ control.maximum }}"
+                  value="{{ device.state[field] }}"
+                  {% if disabled %}disabled{% endif %}
+                  hx-post="/devices/{{ device.address }}/control/{{ field }}"
+                  hx-trigger="change"
+                  hx-target="#state-panel"
+                  hx-vals='js:{value: event.target.value}'
+                />
+              {% endif %}
+            </div>
+          {% endmacro %}
+
+          {% macro render_toggle(field, toggle) %}
+            <div class="control">
+              <label for="toggle-{{ field }}">{{ toggle.label }}</label>
+              <input
+                id="toggle-{{ field }}"
+                data-field="{{ field }}"
+                type="checkbox"
+                {% if device.state[toggle.field] %}checked{% endif %}
+                hx-post="/devices/{{ device.address }}/toggle/{{ field }}"
+                hx-target="body"
+                hx-vals='js:{value: event.target.checked}'
+              />
+            </div>
+          {% endmacro %}
+
+          <div class="tab-panel" data-tab-panel="controls">
+            {% for section_id, section_label, section_tab in sections if section_tab == "controls" %}
+              <section class="control-section">
+                <h3>{{ section_label }}</h3>
+                {% if section_id == "music" %}
+                  {% set enabled = device.state.play_mode %}
+                  <div class="control">
+                    <label for="toggle-music">On</label>
+                    <input
+                      id="toggle-music"
+                      data-field="play_mode"
+                      type="checkbox"
+                      {% if device.state.play_mode %}checked{% endif %}
+                      hx-post="/devices/{{ device.address }}/toggle/music"
+                      hx-target="body"
+                      hx-vals='js:{value: event.target.checked}'
+                    />
+                  </div>
+                  {{ render_control("volume_level", controls["volume_level"], disabled=not enabled, enables_with="play_mode") }}
+                  {{ render_control("sound_mode", controls["sound_mode"], disabled=not enabled, enables_with="play_mode") }}
+                  {{ render_control("captive_playlist_selection", controls["captive_playlist_selection"], disabled=not enabled, enables_with="play_mode") }}
+                  {{ render_control("soothe_playlist_selection", controls["soothe_playlist_selection"], disabled=not enabled, enables_with="play_mode") }}
+                {% elif section_id == "nightlight" %}
+                  {% set enabled = device.state.nightlight_mode %}
+                  {{ render_control("nightlight_mode", controls["nightlight_mode"]) }}
+                  {{ render_control("nightlight_brightness", controls["nightlight_brightness"], disabled=not enabled, enables_with="nightlight_mode") }}
+                {% elif section_id == "animal" %}
+                  {% set enabled = device.state.animal_projection_mode %}
+                  {{ render_toggle("animal_projection_mode", toggles["animal_projection_mode"]) }}
+                  {{ render_control("animal_projection_mode", controls["animal_projection_mode"], disabled=not enabled, enables_with="animal_projection_mode") }}
+                  {{ render_control("animal_projection_brightness", controls["animal_projection_brightness"], disabled=not enabled, enables_with="animal_projection_mode") }}
+                  {{ render_control("animal_projection_speed", controls["animal_projection_speed"], disabled=not enabled, enables_with="animal_projection_mode") }}
+                {% elif section_id == "star" %}
+                  {% set enabled = device.state.star_projection_sequence_mode %}
+                  {% set custom_enabled = device.state.star_projection_sequence_mode == star_sequence_custom %}
+                  {{ render_toggle("star_projection_sequence_mode", toggles["star_projection_sequence_mode"]) }}
+                  {{ render_control("star_projection_sequence_mode", controls["star_projection_sequence_mode"], disabled=not enabled, enables_with="star_projection_sequence_mode") }}
+                  <div class="control custom-colors" data-enables-with="star_projection_sequence_mode" data-enables-value="{{ star_sequence_custom }}">
+                    <label>Custom Colors</label>
+                    <div class="custom-colors-selects">
+                      {% for color_field in ("star_projection_custom_color0", "star_projection_custom_color1", "star_projection_custom_color2") %}
+                        <select
+                          id="ctrl-{{ color_field }}"
+                          data-field="{{ color_field }}"
+                          name="color{{ loop.index0 }}"
+                          {% if not custom_enabled %}disabled{% endif %}
+                          hx-post="/devices/{{ device.address }}/custom-colors"
+                          hx-trigger="change"
+                          hx-target="#state-panel"
+                          hx-include=".custom-colors-selects select"
+                        >
+                          {% for option in color_options %}
+                            <option value="{{ option.value }}" {% if device.state[color_field] == option.value %}selected{% endif %}>{{ option.label }}</option>
+                          {% endfor %}
+                        </select>
+                      {% endfor %}
+                    </div>
+                  </div>
+                  {{ render_control("star_projection_brightness", controls["star_projection_brightness"], disabled=not enabled, enables_with="star_projection_sequence_mode") }}
+                  {{ render_control("star_projection_speed", controls["star_projection_speed"], disabled=not enabled, enables_with="star_projection_sequence_mode") }}
+                {% elif section_id == "timers" %}
+                  {{ render_control("sound_timer_setting", controls["sound_timer_setting"]) }}
+                  {{ render_control("light_timer", controls["light_timer"]) }}
+                {% endif %}
+              </section>
+            {% endfor %}
+          </div>
+
+          <div class="tab-panel" data-tab-panel="sleep_stages" hidden>
+            {% for section_id, section_label, section_tab in sections if section_tab == "sleep_stages" %}
+              <section class="control-section">
+                <h3>{{ section_label }}</h3>
+                {% if section_id == "sleep_stages_timing" %}
+                  {{ render_control("sleep_stages_mode", controls["sleep_stages_mode"]) }}
+                  {{ render_control("captive_sleep_stage_timer", controls["captive_sleep_stage_timer"]) }}
+                  {{ render_control("soothe_sleep_stage_timer", controls["soothe_sleep_stage_timer"]) }}
+                  {{ render_control("sleep_stage_timer", controls["sleep_stage_timer"]) }}
+                {% elif section_id == "sleep_stages_music" %}
+                  {{ render_control("volume_level", controls["volume_level"], id_suffix="-sleep") }}
+                {% endif %}
+              </section>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="status-column">
+          <div id="state-panel">
+            {% include "_state_panel.html" %}
+          </div>
+        </div>
+      </div>
+
+      <script>
+        const ws = new WebSocket(
+          (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/devices/{{ device.address }}"
+        );
+        ws.onmessage = (event) => {
+          const payload = JSON.parse(event.data);
+          const panel = document.getElementById("live-state-json");
+          if (panel) panel.textContent = JSON.stringify(payload.state, null, 2);
+          applyState(payload.state);
+        };
+
+        function applyState(state) {
+          if (!state) return;
+          for (const el of document.querySelectorAll('[data-field]')) {
+            if (document.activeElement === el) continue; // don't fight the user mid-edit
+            const field = el.dataset.field;
+            if (!(field in state)) continue;
+            if (el.type === "checkbox") {
+              el.checked = !!state[field];
+            } else {
+              el.value = state[field];
+            }
+          }
+          for (const group of document.querySelectorAll('[data-bitmask-group]')) {
+            const field = group.dataset.bitmaskGroup.replace(/-sleep$/, "");
+            if (!(field in state) || state[field] === null) continue;
+            const mask = Number(state[field]);
+            for (const box of group.querySelectorAll('input[type="checkbox"]')) {
+              if (document.activeElement === box) continue;
+              box.checked = (mask & Number(box.value)) !== 0;
+            }
+          }
+          for (const wrapper of document.querySelectorAll("[data-enables-with]")) {
+            const required = wrapper.dataset.enablesValue;
+            const raw = state[wrapper.dataset.enablesWith];
+            const enabled = required !== undefined ? String(raw) === required : !!raw;
+            wrapper.classList.toggle("control-disabled", !enabled);
+            for (const input of wrapper.querySelectorAll("input, select")) {
+              input.disabled = !enabled;
+            }
+          }
+        }
+
+        const tabButtons = document.querySelectorAll(".tab-button");
+        const tabPanels = document.querySelectorAll("[data-tab-panel]");
+
+        function activateTab(tabId) {
+          for (const button of tabButtons) {
+            button.classList.toggle("active", button.dataset.tab === tabId);
+          }
+          for (const panel of tabPanels) {
+            panel.hidden = panel.dataset.tabPanel !== tabId;
+          }
+          sessionStorage.setItem("soother-active-tab", tabId);
+        }
+
+        for (const button of tabButtons) {
+          button.addEventListener("click", () => activateTab(button.dataset.tab));
+        }
+
+        activateTab(sessionStorage.getItem("soother-active-tab") || tabButtons[0]?.dataset.tab);
+      </script>
+    {% endif %}
+  {% endif %}
+{% endblock %}
+

@@ -1,0 +1,61 @@
+[project]
+name = "fp-soother-web"
+version = "0.1.0"
+description = "Local web UI for controlling the Fisher-Price Smart Connect Deluxe Soother."
+readme = "README.md"
+authors = [{ name = "Patrick Seal", email = "code@plasticrake.com" }]
+requires-python = ">=3.14.7"
+dependencies = [
+  "fastapi>=0.141.1",
+  "uvicorn[standard]>=0.52.4",
+  "jinja2>=3.1.6",
+  "python-multipart>=0.0.32",
+  "fp-soother-lib",
+  "fp-soother-util",
+]
+keywords = ["web", "fisher-price", "smart connect", "soother"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python",
+  "Topic :: System :: Hardware",
+  "Typing :: Typed",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+[project.scripts]
+fp-soother-web = "fp_soother_web.__main__:main"
+
+[project.urls]
+homepage = "https://github.com/plasticrake/fp-soother"
+repository = "https://github.com/plasticrake/fp-soother"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["ruff>=0.16.6", "ty>=0.0.79"]
+
+[tool.ruff.lint]
+preview = true
+select = [
+  "correctness",
+  "suspicious",
+  "complexity",
+  "performance",
+  "style",
+  "security",
+]
+# FastAPI's Depends(...) default-argument pattern is idiomatic, not a bug.
+ignore = ["B008"]
+
+[tool.uv.sources]
+fp-soother-lib = { workspace = true }
+fp-soother-util = { workspace = true }

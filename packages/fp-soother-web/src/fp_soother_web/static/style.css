@@ -1,0 +1,208 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+  color: #1a1a1a;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1rem 1.5rem;
+  background: #2b2d42;
+  color: white;
+}
+
+header a {
+  color: white;
+  text-decoration: none;
+}
+
+header nav {
+  display: flex;
+  gap: 1rem;
+}
+
+main {
+  padding: 1.5rem;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.device-card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.status-ok {
+  color: #2a9d8f;
+}
+
+.status-error {
+  color: #e63946;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.control label {
+  min-width: 12rem;
+}
+
+.device-layout {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+}
+
+.controls-column {
+  flex: 1 1 55%;
+  min-width: 0;
+}
+
+.status-column {
+  flex: 1 1 45%;
+  min-width: 0;
+  position: sticky;
+  top: 1.5rem;
+}
+
+.control-section {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.75rem 1rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.control-section h3 {
+  margin-top: 0;
+}
+
+.control select {
+  flex: 1;
+}
+
+.custom-colors-selects {
+  display: flex;
+  flex: 1;
+  gap: 0.5rem;
+}
+
+.custom-colors-selects select {
+  flex: 1;
+  min-width: 0;
+}
+
+.control-disabled {
+  opacity: 0.5;
+}
+
+.control-disabled label {
+  color: #888;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid #ddd;
+  margin-bottom: 1rem;
+}
+
+.tab-button {
+  padding: 0.5rem 1rem;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  color: #555;
+}
+
+.tab-button.active {
+  border-bottom-color: #2b2d42;
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+.bitmask-options {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.bitmask-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+pre {
+  background: #f5f5f5;
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.presets-bar {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 0.75rem 1rem 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.presets-bar h3 {
+  margin-top: 0;
+}
+
+.preset-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.preset-slot span {
+  min-width: 10rem;
+}
+
+.preset-slot form {
+  margin: 0;
+}
+
+.hint {
+  color: #888;
+  font-size: 0.85rem;
+  margin-bottom: 0;
+}
+
+.scan-results {
+  list-style: none;
+  padding: 0;
+}
+
+.scan-results li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #eee;
+}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Devices - Soother{% endblock %}
+{% block content %}
+  <h1>Paired Devices</h1>
+  {% if not devices %}
+    <p>No paired devices yet. <a href="/scan">Scan for a device</a> to pair one.</p>
+  {% else %}
+    <div class="device-list">
+      {% for device in devices %}
+        {% include "_device_card.html" %}
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endblock %}

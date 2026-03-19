@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Soother{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="/static/htmx.min.js"></script>
+</head>
+<body>
+  <header>
+    <a href="/">Soother</a>
+    <nav>
+      <a href="/">Devices</a>
+      <a href="/scan">Scan &amp; Pair</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

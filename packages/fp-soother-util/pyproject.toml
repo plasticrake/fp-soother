@@ -1,0 +1,44 @@
+[project]
+name = "fp-soother-util"
+version = "1.0.0"
+description = "Shared utilities for fp-soother packages"
+readme = "README.md"
+authors = [{ name = "Patrick Seal", email = "code@plasticrake.com" }]
+requires-python = ">=3.14.7"
+dependencies = ["platformdirs>=4.11.8"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Software Development :: Libraries",
+  "Typing :: Typed",
+]
+license = "MIT"
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+homepage = "https://github.com/plasticrake/fp-soother"
+repository = "https://github.com/plasticrake/fp-soother"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["ruff>=0.16.6", "ty>=0.0.79"]
+
+[tool.ruff.lint]
+preview = true
+select = [
+  "correctness",
+  "suspicious",
+  "complexity",
+  "performance",
+  "style",
+  "security",
+]
