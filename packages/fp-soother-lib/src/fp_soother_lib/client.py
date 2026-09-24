@@ -153,7 +153,10 @@ class SootherClient:
         pass *ble_device*/*ble_device_callback* instead of relying on our own
         scan -- see SootherClient.__init__."""
         if address is None:
-            device, _ = await find_soother(timeout=scan_timeout)
+            try:
+                device, _ = await find_soother(timeout=scan_timeout)
+            except (BleakError, OSError) as exc:
+                raise SootherConnectionError(f"BLE scan failed: {exc}") from exc
             address = device.address
             ble_device = device
 
@@ -184,9 +187,14 @@ class SootherClient:
             return self._ble_device_callback()
         if self._ble_device is not None:
             return self._ble_device
-        device = await BleakScanner.find_device_by_address(
-            self._address, timeout=self._scan_timeout
-        )
+        try:
+            device = await BleakScanner.find_device_by_address(
+                self._address, timeout=self._scan_timeout
+            )
+        except (BleakError, OSError) as exc:
+            raise SootherConnectionError(
+                f"BLE scan for {self._address} failed: {exc}"
+            ) from exc
         if device is None:
             raise SootherConnectionError(
                 f"Could not find a BLE device advertising at {self._address}"
@@ -220,7 +228,10 @@ class SootherClient:
 
     async def _disconnect(self) -> None:
         if self._client and self._client.is_connected:
-            await self._client.disconnect()
+            try:
+                await self._client.disconnect()
+            except (BleakError, TimeoutError, OSError) as exc:
+                log.debug("Error disconnecting from %s: %s", self._address, exc)
         self._client = None
 
     async def open(self) -> None:
@@ -360,13 +371,21 @@ class SootherClient:
             raise SootherConnectionError("Not connected.")
         return self._client
 
+    async def _read_char(self, uuid: str) -> bytes:
+        """read_gatt_char on the current connection, raising any BLE-level
+        failure as SootherConnectionError."""
+        client = self._require_client()
+        try:
+            return bytes(await client.read_gatt_char(uuid))
+        except (BleakError, TimeoutError, OSError) as exc:
+            raise SootherConnectionError(f"Read of {uuid} failed: {exc}") from exc
+
     async def _read_raw_state(self, max_attempts: int = 10) -> bytes:
         """Read + decrypt CHAR_STATE, retrying until the device's own
         checksum passes (see encryption.is_valid_state_decrypt)."""
         key = self._require_session_key()
-        client = self._require_client()
         for _ in range(max_attempts):
-            ct = bytes(await client.read_gatt_char(CHAR_STATE))
+            ct = await self._read_char(CHAR_STATE)
             raw = enc.decrypt_state(ct, key)
             if enc.is_valid_state_decrypt(raw):
                 return raw
@@ -386,9 +405,8 @@ class SootherClient:
         soothe_sleep_stage_timer through this pipeline reproduces the exact
         value just written."""
         key = self._require_session_key()
-        client = self._require_client()
         for _ in range(max_attempts):
-            ct = bytes(await client.read_gatt_char(CHAR_AUX_STATE))
+            ct = await self._read_char(CHAR_AUX_STATE)
             raw = enc.decrypt_state(ct, key)
             if enc.is_valid_state_decrypt(raw):
                 descrambled, _cak = enc.descramble_decrypted_state(raw)
@@ -667,5 +685,4 @@ class SootherClient:
         await self._send_state_command(command_id, value, f"raw command {command_id}")
 
     async def read_raw(self, char_uuid: str) -> bytes:
-        client = self._require_client()
-        return bytes(await client.read_gatt_char(char_uuid))
+        return await self._read_char(char_uuid)
