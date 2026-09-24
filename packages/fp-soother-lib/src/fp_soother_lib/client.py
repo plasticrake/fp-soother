@@ -227,12 +227,16 @@ class SootherClient:
         await self._subscribe_notifications()
 
     async def _disconnect(self) -> None:
-        if self._client and self._client.is_connected:
+        # Detach the client before disconnecting: bleak fires
+        # disconnected_callback for every disconnect, including this one, and
+        # _on_disconnected() uses "no longer self._client" to recognize a
+        # disconnect we started ourselves.
+        client, self._client = self._client, None
+        if client is not None and client.is_connected:
             try:
-                await self._client.disconnect()
+                await client.disconnect()
             except (BleakError, TimeoutError, OSError) as exc:
                 log.debug("Error disconnecting from %s: %s", self._address, exc)
-        self._client = None
 
     async def open(self) -> None:
         """Open the BLE connection without the ``connect()`` context-manager
@@ -246,6 +250,11 @@ class SootherClient:
         await self._disconnect()
 
     def _on_disconnected(self, client: BleakClient) -> None:
+        if client is not self._client:
+            # A disconnect we started (close()/pair() detach the client
+            # first), or a stale client that has already been replaced.
+            log.debug("Disconnected from %s.", self._address)
+            return
         log.warning("Device disconnected unexpectedly.")
         for cb in self._disconnect_callbacks:
             try:
@@ -291,9 +300,7 @@ class SootherClient:
         This disconnects and reconnects internally (the handshake owns its
         own connection lifecycle).
         """
-        if self._client and self._client.is_connected:
-            await self._client.disconnect()
-        self._client = None
+        await self._disconnect()
         device = await self._resolve_ble_device()
         self._session_key = await pair_device(
             device, self._peripheral_type, ble_device_callback=self._ble_device_callback
