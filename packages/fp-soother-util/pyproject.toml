@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "Shared utilities for fp-soother packages"
 readme = "README.md"
 authors = [{ name = "Patrick Seal", email = "code@plasticrake.com" }]
-requires-python = ">=3.14.7"
+requires-python = ">=3.14.0"
 dependencies = ["platformdirs>=4.11.8"]
 classifiers = [
   "Development Status :: 3 - Alpha",

@@ -52,7 +52,7 @@ Four packages in the `uv` workspace, layered strictly bottom-to-top — `fp-soot
 
 ## Python and dependency expectations
 
-- The library package targets Python 3.14.7 (`requires-python = ">=3.14.7"`).
+- The library package targets Python 3.14.0 (`requires-python = ">=3.14.0"`).
 - Use `uv` commands from the repository root.
 - New dependencies should be added only where they are clearly needed and should be reflected in the relevant package `pyproject.toml`.
 

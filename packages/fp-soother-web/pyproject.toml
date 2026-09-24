@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local web UI for controlling the Fisher-Price Smart Connect Deluxe Soother."
 readme = "README.md"
 authors = [{ name = "Patrick Seal", email = "code@plasticrake.com" }]
-requires-python = ">=3.14.7"
+requires-python = ">=3.14.0"
 dependencies = [
   "fastapi>=0.141.1",
   "uvicorn[standard]>=0.52.4",

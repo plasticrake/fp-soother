@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "Python BLE library for Fisher-Price Smart Connect Deluxe Soother"
 readme = "README.md"
 authors = [{ name = "Patrick Seal", email = "code@plasticrake.com" }]
-requires-python = ">=3.14.7"
+requires-python = ">=3.14.0"
 dependencies = [
   "bleak>=3.0.2",
   "bleak-retry-connector>=4.6.0",
