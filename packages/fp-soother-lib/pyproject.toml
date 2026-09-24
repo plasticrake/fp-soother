@@ -1,6 +1,6 @@
 [project]
 name = "fp-soother-lib"
-version = "1.0.1"
+version = "1.0.2"
 description = "Python BLE library for Fisher-Price Smart Connect Deluxe Soother"
 readme = "README.md"
 authors = [{ name = "Patrick Seal", email = "code@plasticrake.com" }]

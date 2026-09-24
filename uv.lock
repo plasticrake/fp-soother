@@ -298,7 +298,7 @@ dev = [
 
 [[package]]
 name = "fp-soother-lib"
-version = "1.0.1"
+version = "1.0.2"
 source = { editable = "packages/fp-soother-lib" }
 dependencies = [
     { name = "bleak" },
