@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 import os
 from types import SimpleNamespace
 from typing import cast
@@ -234,6 +235,50 @@ async def test_send_preset_merges_overrides_onto_current_live_state(monkeypatch)
     assert client._state.nightlight_mode == 0
 
 
+class _DisconnectingFakeClient:
+    """Stand-in BleakClient whose disconnect() fires the owner's
+    disconnected_callback before returning, as bleak's BlueZ backend does."""
+
+    def __init__(self, owner: SootherClient) -> None:
+        self.is_connected = True
+        self._owner = owner
+        self.disconnect_calls = 0
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
+        self.is_connected = False
+        self._owner._on_disconnected(cast(BleakClient, self))
+
+
+def _track_disconnect_callbacks(client: SootherClient) -> list[None]:
+    fired: list[None] = []
+    client.on_disconnect(lambda: fired.append(None))
+    return fired
+
+
+def _unexpected_disconnect_warnings(caplog) -> list[logging.LogRecord]:
+    return [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "unexpectedly" in r.getMessage()
+    ]
+
+
+async def test_close_does_not_fire_disconnect_callbacks_or_warn(caplog):
+    client = SootherClient(ADDRESS)
+    fake = _DisconnectingFakeClient(client)
+    client._client = cast(BleakClient, fake)
+    fired = _track_disconnect_callbacks(client)
+
+    with caplog.at_level(logging.DEBUG, logger=client_module.__name__):
+        await client.close()
+
+    assert fake.disconnect_calls == 1
+    assert client._client is None
+    assert fired == []
+    assert _unexpected_disconnect_warnings(caplog) == []
+
+
 async def test_close_swallows_bleak_error_from_disconnect():
     client = SootherClient(ADDRESS)
 
@@ -248,6 +293,66 @@ async def test_close_swallows_bleak_error_from_disconnect():
     await client.close()
 
     assert client._client is None
+
+
+async def test_pair_does_not_fire_disconnect_callbacks_or_warn(monkeypatch, caplog):
+    session_key = os.urandom(16)
+    client = SootherClient(ADDRESS)
+    old = _DisconnectingFakeClient(client)
+    client._client = cast(BleakClient, old)
+    fired = _track_disconnect_callbacks(client)
+    reconnected = _fake_client(is_connected=True)
+
+    async def fake_resolve():
+        return SimpleNamespace(address=ADDRESS)
+
+    async def fake_pair_device(device, peripheral_type, *, ble_device_callback):
+        return session_key
+
+    async def fake_establish(disconnected_callback):
+        return reconnected
+
+    async def fake_subscribe():
+        pass
+
+    monkeypatch.setattr(client, "_resolve_ble_device", fake_resolve)
+    monkeypatch.setattr(client_module, "pair_device", fake_pair_device)
+    monkeypatch.setattr(client, "_establish", fake_establish)
+    monkeypatch.setattr(client, "_subscribe_notifications", fake_subscribe)
+
+    with caplog.at_level(logging.DEBUG, logger=client_module.__name__):
+        await client.pair()
+
+    assert old.disconnect_calls == 1
+    assert client.session_key == session_key
+    assert client._client is reconnected
+    assert fired == []
+    assert _unexpected_disconnect_warnings(caplog) == []
+
+
+def test_unexpected_disconnect_fires_callbacks_and_warns(caplog):
+    client = SootherClient(ADDRESS)
+    fake = _fake_client(is_connected=False)
+    client._client = fake
+    fired = _track_disconnect_callbacks(client)
+
+    with caplog.at_level(logging.DEBUG, logger=client_module.__name__):
+        client._on_disconnected(fake)
+
+    assert fired == [None]
+    assert len(_unexpected_disconnect_warnings(caplog)) == 1
+
+
+def test_disconnect_of_replaced_client_is_ignored(caplog):
+    client = SootherClient(ADDRESS)
+    client._client = _fake_client(is_connected=True)
+    fired = _track_disconnect_callbacks(client)
+
+    with caplog.at_level(logging.DEBUG, logger=client_module.__name__):
+        client._on_disconnected(_fake_client(is_connected=False))
+
+    assert fired == []
+    assert _unexpected_disconnect_warnings(caplog) == []
 
 
 def _client_with_failing_read(exc: BaseException) -> SootherClient:
