@@ -6,9 +6,12 @@ from typing import cast
 import pytest
 from bleak import BleakClient
 from bleak.backends.characteristic import BleakGATTCharacteristic
+from bleak.exc import BleakError
 
+from fp_soother_lib import client as client_module
 from fp_soother_lib import encryption as enc
 from fp_soother_lib.client import SootherClient
+from fp_soother_lib.constants import CHAR_STATE
 from fp_soother_lib.exceptions import SootherCommandError, SootherConnectionError
 from fp_soother_lib.protocol import SootherState, build_preset_command
 
@@ -229,3 +232,72 @@ async def test_send_preset_merges_overrides_onto_current_live_state(monkeypatch)
     # it builds from a copy of it.
     assert client._state.volume_level == 5
     assert client._state.nightlight_mode == 0
+
+
+async def test_close_swallows_bleak_error_from_disconnect():
+    client = SootherClient(ADDRESS)
+
+    async def failing_disconnect():
+        raise BleakError("already gone")
+
+    client._client = cast(
+        BleakClient,
+        SimpleNamespace(is_connected=True, disconnect=failing_disconnect),
+    )
+
+    await client.close()
+
+    assert client._client is None
+
+
+def _client_with_failing_read(exc: BaseException) -> SootherClient:
+    async def failing_read(_uuid):
+        raise exc
+
+    client = SootherClient(ADDRESS, session_key=os.urandom(16))
+    client._client = cast(
+        BleakClient,
+        SimpleNamespace(is_connected=True, read_gatt_char=failing_read),
+    )
+    return client
+
+
+@pytest.mark.parametrize(
+    "exc", [BleakError("read failed"), TimeoutError(), OSError("adapter gone")]
+)
+async def test_read_raw_state_wraps_ble_errors(exc):
+    client = _client_with_failing_read(exc)
+    with pytest.raises(SootherConnectionError) as info:
+        await client._read_raw_state()
+    assert info.value.__cause__ is exc
+
+
+async def test_read_raw_aux_state_wraps_bleak_error():
+    client = _client_with_failing_read(BleakError("read failed"))
+    with pytest.raises(SootherConnectionError):
+        await client._read_raw_aux_state()
+
+
+async def test_refresh_state_wraps_bleak_error():
+    client = _client_with_failing_read(BleakError("read failed"))
+    with pytest.raises(SootherConnectionError):
+        await client.refresh_state()
+
+
+async def test_read_raw_wraps_bleak_error():
+    client = _client_with_failing_read(BleakError("read failed"))
+    with pytest.raises(SootherConnectionError):
+        await client.read_raw(CHAR_STATE)
+
+
+async def test_resolve_ble_device_wraps_scan_error(monkeypatch):
+    async def failing_find(_address, timeout):
+        raise BleakError("Bluetooth adapter is off")
+
+    monkeypatch.setattr(
+        client_module.BleakScanner, "find_device_by_address", failing_find
+    )
+    client = SootherClient(ADDRESS)
+
+    with pytest.raises(SootherConnectionError):
+        await client._resolve_ble_device()

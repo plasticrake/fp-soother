@@ -7,6 +7,7 @@ Pairing handshake: derives a session key for a new device over BLE alone.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 
 from bleak import BleakClient
@@ -25,6 +26,8 @@ from .constants import (
 )
 from .exceptions import SootherCommandError, SootherConnectionError
 from .protocol import build_rtc_update_command
+
+log = logging.getLogger(__name__)
 
 
 async def _subscribe_all(client: BleakClient, on_state_notify) -> asyncio.Future:
@@ -53,7 +56,8 @@ async def _subscribe_all(client: BleakClient, on_state_notify) -> asyncio.Future
 
 async def _read_char(client: BleakClient, uuid: str, timeout: float = 8.0) -> bytes:
     """read_gatt_char wrapped in a timeout -- a single hung BLE read should
-    fail fast and clearly rather than silently stalling the whole flow."""
+    fail fast and clearly rather than silently stalling the whole flow. Any
+    BLE-level failure is raised as SootherConnectionError."""
     try:
         return bytes(
             await asyncio.wait_for(client.read_gatt_char(uuid), timeout=timeout)
@@ -62,6 +66,8 @@ async def _read_char(client: BleakClient, uuid: str, timeout: float = 8.0) -> by
         raise SootherConnectionError(
             f"Read of {uuid} timed out after {timeout}s"
         ) from exc
+    except (BleakError, OSError) as exc:
+        raise SootherConnectionError(f"Read of {uuid} failed: {exc}") from exc
 
 
 async def _read_and_decrypt_state(
@@ -104,6 +110,12 @@ async def pair(
 
     Returns the 16-byte session key. Callers should persist it so future
     connections can skip pairing entirely.
+
+    Raises SootherConnectionError if the connection or a characteristic read
+    fails, SootherCommandError if the device rejects the key-request or
+    rtcUpdate write (a rejected key request usually means the device is not
+    in pairing mode), and TimeoutError if the device never sends its
+    key-request reply within *timeout*.
     """
     try:
         # establish_connection() owns its own retry/timeout lifecycle --
@@ -138,7 +150,13 @@ async def pair(
         cak = enc.change_cmd_auth_key_from_raw_state(raw_state)
 
         key_request = enc.build_key_request_message(cak, peripheral_type)
-        await client.write_gatt_char(CHAR_INFRA_UPDATE, key_request, response=True)
+        try:
+            await client.write_gatt_char(CHAR_INFRA_UPDATE, key_request, response=True)
+        except (BleakError, TimeoutError, OSError) as exc:
+            raise SootherCommandError(
+                f"Device rejected the key request ({exc}); it is probably not "
+                "in pairing mode"
+            ) from exc
 
         reply = await asyncio.wait_for(reply_future, timeout=timeout)
         session_key, _key_request_key = enc.decrypt_key_request_reply(
@@ -165,4 +183,9 @@ async def pair(
         return session_key
     finally:
         if client.is_connected:
-            await client.disconnect()
+            # Don't let a failed teardown mask the handshake's own result or
+            # exception.
+            try:
+                await client.disconnect()
+            except (BleakError, TimeoutError, OSError) as exc:
+                log.debug("Error disconnecting after pairing: %s", exc)
