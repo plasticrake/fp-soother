@@ -14,6 +14,7 @@ from fp_soother_lib import encryption as enc
 from fp_soother_lib.client import SootherClient
 from fp_soother_lib.constants import CHAR_STATE
 from fp_soother_lib.exceptions import SootherCommandError, SootherConnectionError
+from fp_soother_lib.key_tables import SHARED_ENCRYPTION_KEY
 from fp_soother_lib.protocol import SootherState, build_preset_command
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
@@ -406,3 +407,75 @@ async def test_resolve_ble_device_wraps_scan_error(monkeypatch):
 
     with pytest.raises(SootherConnectionError):
         await client._resolve_ble_device()
+
+
+# ── Shared-key (firmware < 9) mode ───────────────────────────────────────────
+
+
+def _client_with_infra(infra: bytes, session_key: bytes | None = None):
+    async def read(_uuid):
+        return bytearray(infra)
+
+    client = SootherClient(ADDRESS, session_key=session_key)
+    client._client = cast(
+        BleakClient, SimpleNamespace(is_connected=True, read_gatt_char=read)
+    )
+    return client
+
+
+async def test_detect_crypto_mode_uses_shared_key_below_firmware_9():
+    client = _client_with_infra(bytes.fromhex("000800010000cccc"))
+    await client._detect_crypto_mode()
+    assert client.uses_shared_key is True
+    assert client.session_key == SHARED_ENCRYPTION_KEY
+    assert client.is_paired is True
+    assert client.state.firmware_version == 8
+
+
+async def test_detect_crypto_mode_keeps_session_key_from_firmware_9():
+    session_key = os.urandom(16)
+    client = _client_with_infra(bytes.fromhex("000b00010001cccc"), session_key)
+    await client._detect_crypto_mode()
+    assert client.uses_shared_key is False
+    assert client.session_key == session_key
+
+
+async def test_detect_crypto_mode_assumes_unique_key_when_read_fails():
+    client = _client_with_failing_read(BleakError("read failed"))
+    await client._detect_crypto_mode()
+    assert client.uses_shared_key is False
+
+
+async def test_pair_on_shared_key_device_only_syncs_clock(monkeypatch):
+    client = SootherClient(ADDRESS)
+    client._client = _fake_client(is_connected=True)
+    client._shared_key = True
+    client._session_key = SHARED_ENCRYPTION_KEY
+    calls = []
+
+    async def fake_rtc():
+        calls.append("rtc")
+
+    async def fail_pair_device(*_args, **_kwargs):
+        raise AssertionError("shared-key devices have no pairing handshake")
+
+    monkeypatch.setattr(client, "send_rtc_update", fake_rtc)
+    monkeypatch.setattr(client_module, "pair_device", fail_pair_device)
+
+    await client.pair()
+
+    assert calls == ["rtc"]
+    assert client.session_key == SHARED_ENCRYPTION_KEY
+
+
+def test_on_state_notification_decodes_shared_key_layout():
+    client = SootherClient(ADDRESS)
+    client._shared_key = True
+    client._session_key = SHARED_ENCRYPTION_KEY
+    raw = bytearray(os.urandom(16))
+    raw[3] = raw[5] ^ raw[6]
+    ciphertext = enc.encrypt_command(bytes(raw), SHARED_ENCRYPTION_KEY)
+
+    client._on_state_notification(_NO_CHAR, bytearray(ciphertext))
+
+    assert client.state.raw_state == bytes(raw)

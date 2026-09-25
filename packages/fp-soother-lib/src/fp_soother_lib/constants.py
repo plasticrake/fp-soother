@@ -33,6 +33,12 @@ NOTIFY_CHARACTERISTICS = [
 PERIPHERAL_TYPE = 11          # dyw47 legacy_type
 KEY_SIZE        = 16          # AES-128 key length in bytes
 
+# dyw47.json's encryption_methods: firmware at or above this uses the
+# per-device "uniqueKey" exchange (pairing.pair()); anything older uses the
+# static "sharedKey" (key_tables.SHARED_ENCRYPTION_KEY) with no key exchange,
+# and a different CHAR_STATE/command byte layout (see encryption.py).
+UNIQUE_KEY_MIN_FIRMWARE_VERSION = 9
+
 # ── State command IDs (updateCommandId in dyw47.json) ───────────────────────
 CMD_PLAY_MODE                        = 1
 CMD_SOUND_MODE                       = 2
@@ -107,6 +113,12 @@ STATE_BYTE_LENGTH = 9
 # NOT the state directly -- it must be descrambled first (see crypto.py's
 # is_valid_state_decrypt()/descramble_decrypted_state()). state[i] = raw[MAP[i]].
 RAW_TO_STATE_MAP = [8, 7, 11, 14, 12, 1, 5, 2, 0, 9, 13, 3]
+
+# The same map for a shared-key (firmware < UNIQUE_KEY_MIN_FIRMWARE_VERSION)
+# device: the native decrypt core's other (shared-key) branch, read from its
+# arm64 disassembly and confirmed live against a firmware-8 dyw47. Entries
+# 9-11 are random padding on that firmware, not stable zeros.
+SHARED_KEY_RAW_TO_STATE_MAP = [8, 2, 9, 1, 13, 4, 12, 10, 7, 11, 15, 14]
 
 # Attribute layout inside the CMD_PRESET (22) composite payload -- a
 # "preset"/"favorite" apply is a single command bundling every settable

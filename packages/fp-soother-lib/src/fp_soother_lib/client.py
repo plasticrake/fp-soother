@@ -76,8 +76,10 @@ from .constants import (
     CMD_VOLUME_LEVEL,
     NOTIFY_CHARACTERISTICS,
     PERIPHERAL_TYPE,
+    UNIQUE_KEY_MIN_FIRMWARE_VERSION,
 )
 from .exceptions import SootherCommandError, SootherConnectionError
+from .key_tables import SHARED_ENCRYPTION_KEY
 from .pairing import pair as pair_device
 from .protocol import (
     SootherState,
@@ -111,6 +113,10 @@ class SootherClient:
         self._peripheral_type = peripheral_type
         self._client: BleakClient | None = None
         self._session_key: bytes | None = session_key
+        # Set by _detect_crypto_mode() on every connect: True for a
+        # shared-key (firmware < UNIQUE_KEY_MIN_FIRMWARE_VERSION) device,
+        # which uses a static key and its own CHAR_STATE/command byte layout.
+        self._shared_key = False
         # A caller that already knows how to reach the device (e.g. a Home
         # Assistant integration resolving via its own BleakScanner) can pass
         # ble_device/ble_device_callback to skip our own scan-by-address --
@@ -224,7 +230,27 @@ class SootherClient:
 
     async def _connect(self) -> None:
         self._client = await self._establish(self._on_disconnected)
+        await self._detect_crypto_mode()
         await self._subscribe_notifications()
+
+    async def _detect_crypto_mode(self) -> None:
+        """Read the plaintext CHAR_INFRA_STATE to learn the firmware version
+        and pick the crypto mode the same way the real app does: firmware
+        below UNIQUE_KEY_MIN_FIRMWARE_VERSION uses the static shared key (no
+        pairing handshake at all), anything newer the per-device session key
+        from pair(). If the read fails, assumes unique-key."""
+        try:
+            decode_infra_state(await self._read_char(CHAR_INFRA_STATE), self._state)
+        except (SootherConnectionError, ValueError) as exc:
+            log.warning("Could not read firmware version, assuming unique-key: %s", exc)
+            return
+        firmware = self._state.firmware_version
+        self._shared_key = (
+            firmware is not None and firmware < UNIQUE_KEY_MIN_FIRMWARE_VERSION
+        )
+        if self._shared_key:
+            log.debug("Firmware %s: using the shared key", firmware)
+            self._session_key = SHARED_ENCRYPTION_KEY
 
     async def _disconnect(self) -> None:
         # Detach the client before disconnecting: bleak fires
@@ -285,6 +311,13 @@ class SootherClient:
         return bool(self._client and self._client.is_connected)
 
     @property
+    def uses_shared_key(self) -> bool:
+        """True if the connected device's firmware predates the unique-key
+        exchange (see UNIQUE_KEY_MIN_FIRMWARE_VERSION). Such a device needs
+        no pairing; its static key is set as session_key on connect."""
+        return self._shared_key
+
+    @property
     def is_paired(self) -> bool:
         """True if this client has a session key (from a prior pair() call
         or passed on init)."""
@@ -298,8 +331,15 @@ class SootherClient:
         already be in its own pairing mode.
 
         This disconnects and reconnects internally (the handshake owns its
-        own connection lifecycle).
+        own connection lifecycle). If not already connected, it first
+        connects to read the firmware version: a shared-key device (firmware
+        < 9) has no handshake, so this only syncs its clock and returns.
         """
+        if not self.is_connected:
+            await self._connect()
+        if self._shared_key:
+            await self.send_rtc_update()
+            return
         await self._disconnect()
         device = await self._resolve_ble_device()
         self._session_key = await pair_device(
@@ -334,9 +374,11 @@ class SootherClient:
         # make ourselves, not just the ones from our own commands.
         try:
             raw = enc.decrypt_state(self._latest_notification_ct, self._session_key)
-            if not enc.is_valid_state_decrypt(raw):
+            if not enc.is_valid_state_decrypt(raw, shared_key=self._shared_key):
                 return
-            descrambled, _cak = enc.descramble_decrypted_state(raw)
+            descrambled, _cak = enc.descramble_decrypted_state(
+                raw, shared_key=self._shared_key
+            )
             new_state = decode_state(descrambled, raw_state=raw)
         except Exception as exc:  # noqa: BLE001 - bleak's notification dispatch must not blow up on bad data
             log.debug("Could not decode state notification: %s", exc)
@@ -394,7 +436,7 @@ class SootherClient:
         for _ in range(max_attempts):
             ct = await self._read_char(CHAR_STATE)
             raw = enc.decrypt_state(ct, key)
-            if enc.is_valid_state_decrypt(raw):
+            if enc.is_valid_state_decrypt(raw, shared_key=self._shared_key):
                 return raw
             await asyncio.sleep(0.3)
         raise SootherConnectionError(
@@ -415,8 +457,10 @@ class SootherClient:
         for _ in range(max_attempts):
             ct = await self._read_char(CHAR_AUX_STATE)
             raw = enc.decrypt_state(ct, key)
-            if enc.is_valid_state_decrypt(raw):
-                descrambled, _cak = enc.descramble_decrypted_state(raw)
+            if enc.is_valid_state_decrypt(raw, shared_key=self._shared_key):
+                descrambled, _cak = enc.descramble_decrypted_state(
+                    raw, shared_key=self._shared_key
+                )
                 return descrambled
             await asyncio.sleep(0.3)
         raise SootherConnectionError(
@@ -431,7 +475,9 @@ class SootherClient:
     async def _refresh_state_locked(self) -> SootherState:
         """refresh_state()'s body, for callers that already hold _io_lock."""
         raw = await self._read_raw_state()
-        descrambled, _cak = enc.descramble_decrypted_state(raw)
+        descrambled, _cak = enc.descramble_decrypted_state(
+            raw, shared_key=self._shared_key
+        )
         # Merge (not replace) so aux/infra-only fields (e.g. the sleep-stage
         # timers) aren't reset to their None defaults while the reads below
         # are in flight -- a concurrent CHAR_STATE notification (the device
@@ -483,7 +529,9 @@ class SootherClient:
         log.debug("Sending %s -> %s", name, value)
         async with self._io_lock:
             raw_state = await self._ensure_raw_state_locked()
-            raw_cmd = build_state_command(command_id, value, raw_state)
+            raw_cmd = build_state_command(
+                command_id, value, raw_state, shared_key=self._shared_key
+            )
             await self._write_command_locked(raw_cmd, "write failed")
 
     async def send_rtc_update(self) -> None:
@@ -492,7 +540,7 @@ class SootherClient:
         log.debug("Sending clock sync (rtcUpdate)")
         async with self._io_lock:
             raw_state = await self._ensure_raw_state_locked()
-            raw_cmd = build_rtc_update_command(raw_state)
+            raw_cmd = build_rtc_update_command(raw_state, shared_key=self._shared_key)
             await self._write_command_locked(raw_cmd, "rtcUpdate write failed")
 
     async def _send_custom_color_command(
@@ -507,7 +555,7 @@ class SootherClient:
         async with self._io_lock:
             raw_state = await self._ensure_raw_state_locked()
             raw_cmd = build_custom_color_sequence_command(
-                color0, color1, color2, raw_state
+                color0, color1, color2, raw_state, shared_key=self._shared_key
             )
             await self._write_command_locked(raw_cmd, "write failed")
 
@@ -682,7 +730,9 @@ class SootherClient:
         async with self._io_lock:
             raw_state = await self._ensure_raw_state_locked()
             new_state = dataclasses.replace(self._state, **overrides)
-            raw_cmd = build_preset_command(new_state, raw_state)
+            raw_cmd = build_preset_command(
+                new_state, raw_state, shared_key=self._shared_key
+            )
             await self._write_command_locked(raw_cmd, "preset write failed")
 
     # ─── Escape hatches for further exploration ──────────────────────────────

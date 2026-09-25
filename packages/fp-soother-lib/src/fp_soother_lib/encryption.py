@@ -9,7 +9,8 @@ is exactly one 16-byte block).
     (see that module's docstring), and were confirmed exact against real
     device replies.
   - is_valid_state_decrypt() / descramble_decrypted_state() implement a real
-    checksum+descramble step the device's own firmware performs.
+    checksum+descramble step the device's own firmware performs, in one of
+    two byte layouts: unique-key (firmware >= 9) or shared-key (older).
   - encrypt_command() intentionally does NOT re-scramble its input: the
     build_*_command() functions in protocol.py already produce a final,
     fully-positioned frame.
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from .constants import RAW_TO_STATE_MAP, SHARED_KEY_RAW_TO_STATE_MAP
 from .key_tables import KEY_REQUEST_KEYS, KEY_REQUEST_TABLES, PAIRING_KEYS
 
 
@@ -107,53 +109,55 @@ def decrypt_key_request_reply(
     return session_key, key
 
 
-def is_valid_state_decrypt(raw: bytes) -> bool:
+# The native decrypt core (SmartCrypto's FUN_00007900, verifyPivot=true) has
+# two byte layouts for a 16-byte-key CHAR_STATE block, chosen by a per-key
+# mode flag: unique-key (session key from pairing.pair(), firmware >= 9) and
+# shared-key (key_tables.SHARED_ENCRYPTION_KEY, older firmware). Each layout
+# is (checksum index, xor index a, xor index b, state positions, cak positions).
+_UNIQUE_KEY_LAYOUT = (10, 15, 4, RAW_TO_STATE_MAP, (6, 15, 4))
+_SHARED_KEY_LAYOUT = (3, 5, 6, SHARED_KEY_RAW_TO_STATE_MAP, (0, 6, 5))
+
+
+def _layout(shared_key: bool):
+    return _SHARED_KEY_LAYOUT if shared_key else _UNIQUE_KEY_LAYOUT
+
+
+def is_valid_state_decrypt(raw: bytes, *, shared_key: bool = False) -> bool:
     """
     The device's own firmware only treats a decrypted CHAR_STATE block as
-    genuine if raw[10] == raw[15] ^ raw[4] -- a self-consistency checksum on
-    the raw AES-CBC-decrypted bytes (BEFORE descrambling). Immediately after
-    a fresh pairing the device can briefly return stale/invalid ciphertext;
-    the real app retries CHAR_STATE reads until this checksum passes (this
-    project has observed 3 failures before a 4th succeeds) -- always retry
-    rather than trusting the first read, or changeCmdAuthKey/rolling-token
-    bytes derived from it will be wrong.
+    genuine if a self-consistency checksum on the raw AES-CBC-decrypted bytes
+    (BEFORE descrambling) holds: raw[10] == raw[15] ^ raw[4] for a unique-key
+    device, raw[3] == raw[5] ^ raw[6] for a shared-key (*shared_key*) one.
+    Immediately after a fresh pairing the device can briefly return
+    stale/invalid ciphertext; the real app retries CHAR_STATE reads until
+    this checksum passes (this project has observed 3 failures before a 4th
+    succeeds) -- always retry rather than trusting the first read, or
+    changeCmdAuthKey/rolling-token bytes derived from it will be wrong.
     """
-    return len(raw) == 16 and raw[10] == (raw[15] ^ raw[4])
+    check, a, b, _state_map, _cak_map = _layout(shared_key)
+    return len(raw) == 16 and raw[check] == (raw[a] ^ raw[b])
 
 
-def descramble_decrypted_state(raw: bytes) -> tuple[bytes, bytes]:
+def descramble_decrypted_state(
+    raw: bytes, *, shared_key: bool = False
+) -> tuple[bytes, bytes]:
     """
     Split a raw (already checksum-validated) AES-CBC-decrypted CHAR_STATE
     block into (state, next_change_cmd_auth_key). state is 9 meaningful
     bytes (padded to 12); next_change_cmd_auth_key is 16 bytes with only
-    [0:3] populated (matching change_cmd_auth_key_from_state()).
+    [0:3] populated (matching change_cmd_auth_key_from_raw_state()).
+    *shared_key* selects the shared-key (firmware < 9) byte layout.
     """
     if len(raw) != 16:
         raise ValueError("raw must be 16 bytes")
-    state = bytes(
-        [
-            raw[8],
-            raw[7],
-            raw[11],
-            raw[14],
-            raw[12],
-            raw[1],
-            raw[5],
-            raw[2],
-            raw[0],
-            raw[9],
-            raw[13],
-            raw[3],
-        ]
-    )
-    cak = bytearray(16)
-    cak[0] = raw[6]
-    cak[1] = raw[15]
-    cak[2] = raw[4]
-    return state, bytes(cak)
+    _check, _a, _b, state_map, _cak_map = _layout(shared_key)
+    state = bytes(raw[i] for i in state_map)
+    return state, change_cmd_auth_key_from_raw_state(raw, shared_key=shared_key)
 
 
-def change_cmd_auth_key_from_raw_state(raw_state: bytes) -> bytes:
+def change_cmd_auth_key_from_raw_state(
+    raw_state: bytes, *, shared_key: bool = False
+) -> bytes:
     """
     Derive changeCmdAuthKey directly from a raw (pre-descramble) decrypted
     CHAR_STATE block -- this is also exactly next_change_cmd_auth_key from
@@ -162,10 +166,10 @@ def change_cmd_auth_key_from_raw_state(raw_state: bytes) -> bytes:
     """
     if len(raw_state) != 16:
         raise ValueError("raw_state must be 16 bytes")
+    _check, _a, _b, _state_map, cak_map = _layout(shared_key)
     cak = bytearray(16)
-    cak[0] = raw_state[6]
-    cak[1] = raw_state[15]
-    cak[2] = raw_state[4]
+    for i, pos in enumerate(cak_map):
+        cak[i] = raw_state[pos]
     return bytes(cak)
 
 

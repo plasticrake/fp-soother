@@ -20,6 +20,7 @@ from fp_soother_lib.protocol import (
     decode_infra_state,
     decode_state,
     encode_state,
+    frame_command,
 )
 
 # Maps PRESET_ATTRS' packed-byte index (0-7) to the byte index it lands at in
@@ -255,3 +256,56 @@ def test_decode_infra_state_skips_fields_out_of_bounds():
     assert state.firmware_version == 0
     assert state.firmware_bank == 0
     assert state.firmware_api_level is None
+
+
+# ── Shared-key (firmware < 9) framing ────────────────────────────────────────
+
+
+def test_frame_command_shared_key_layout():
+    """The native encrypt core's shared-key branch, position by position."""
+    prev_raw_state = bytes(range(0x10, 0x20))
+    pt = bytes(range(0xA0, 0xAC))
+    c0, c1, c2 = prev_raw_state[0], prev_raw_state[6], prev_raw_state[5]
+    cmd = frame_command(pt, prev_raw_state, shared_key=True)
+    assert list(cmd) == [
+        pt[8], c1, pt[7], pt[11], c2, c0, pt[6], pt[1],
+        pt[5], c0 ^ c2, pt[3], pt[10], pt[9], pt[4], pt[0], pt[2],
+    ]  # fmt: skip
+
+
+def test_frame_command_rejects_oversized_payload():
+    with pytest.raises(ValueError):
+        frame_command(bytes(13), bytes(16))
+
+
+def test_build_state_command_shared_key_byte_placement():
+    prev_raw_state = bytes(range(16))
+    cmd = build_state_command(7, 200, prev_raw_state, shared_key=True)
+    assert cmd[14] == 7
+    assert cmd[7] == 200
+    assert cmd[1] == prev_raw_state[6]
+    assert cmd[4] == prev_raw_state[5]
+    assert cmd[5] == prev_raw_state[0]
+    assert cmd[9] == prev_raw_state[0] ^ prev_raw_state[5]
+    for i in set(range(16)) - {1, 4, 5, 7, 9, 14}:
+        assert cmd[i] == 0, i
+
+
+def test_build_rtc_update_command_shared_key_places_command_id():
+    cmd = build_rtc_update_command(
+        bytes(16), weekday=3, total_seconds=0, shared_key=True
+    )
+    assert cmd[14] == RTC_UPDATE_COMMAND_ID
+    assert cmd[7] == 3
+
+
+def test_build_preset_command_shared_key_is_plain_frame():
+    """Same packed payload as the unique-key frame, framed with the
+    shared-key layout and no unique-key byte-15 checksum override."""
+    state = SootherState(volume_level=9, nightlight_mode=1, sound_mode=13)
+    unique = build_preset_command(state, bytes(16))
+    packed = bytes(unique[i] for i in PRESET_PACKED_BYTE_TO_OUT_INDEX)
+    shared = build_preset_command(state, bytes(16), shared_key=True)
+    assert shared == frame_command(
+        bytes([CMD_PRESET]) + packed, bytes(16), shared_key=True
+    )
