@@ -101,8 +101,9 @@ def test_build_custom_color_sequence_command_packs_colors():
     expected_low = (color0 & 0x7) | ((color1 & 0x7) << 3) | ((color2 & 0x3) << 6)
     expected_high = (color2 >> 2) & 0x1
 
+    # Unique-key layout: pt[1] -> frame byte 11, pt[2] -> byte 0.
     assert cmd[11] == expected_low
-    assert cmd[12] == expected_high
+    assert cmd[0] == expected_high
     assert cmd[13] == CMD_PROJECTOR_CUSTOM_SEQUENCE
 
 
