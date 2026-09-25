@@ -33,7 +33,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 version="$(uv version --package "$package" --bump "$bump" --short)"
-tag="${package}/${version}"
+tag="${package}/v${version}"
 
 if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
   echo "Tag ${tag} already exists." >&2
