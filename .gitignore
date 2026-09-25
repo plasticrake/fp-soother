@@ -16,3 +16,5 @@ wheels/
 
 # Node (prettier tooling for .md/.toml formatting)
 node_modules/
+
+.env
