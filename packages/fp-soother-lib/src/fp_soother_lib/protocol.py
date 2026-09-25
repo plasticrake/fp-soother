@@ -294,12 +294,10 @@ def build_custom_color_sequence_command(
     value_low = (color0 & 0x7) | ((color1 & 0x7) << 3) | ((color2 & 0x3) << 6)
     value_high = (color2 >> 2) & 0x1
 
-    pt = bytearray(12)
-    pt[0] = CMD_PROJECTOR_CUSTOM_SEQUENCE
-    pt[1] = value_low
-    # pt[8] lands at frame byte 12 in the unique-key layout, where this
-    # command has always placed value_high.
-    pt[8] = value_high
+    # SmartCommand.append() is an LSB-first bit-packer, so the 9th bit
+    # spills into the byte right after value_low. Confirmed live on a
+    # firmware-8 dyw47: color2 = 5 (blue) and 6 (purple) read back intact.
+    pt = bytes([CMD_PROJECTOR_CUSTOM_SEQUENCE, value_low, value_high])
     return frame_command(pt, prev_raw_state, shared_key=shared_key)
 
 
