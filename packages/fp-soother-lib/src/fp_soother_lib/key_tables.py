@@ -79,3 +79,16 @@ KEY_REQUEST_TABLES: dict[int, bytes] = {
     18: bytes.fromhex("7b3ae09a4a5193aad457"),
     19: bytes.fromhex("e82a4386dfa1f48be26a"),
 }
+
+# The static AES key a shared-key (firmware < UNIQUE_KEY_MIN_FIRMWARE_VERSION)
+# device uses for every CHAR_STATE read/CHAR_STATE_UPDATE write -- there is
+# no per-device key exchange at all on these firmwares. The real app's
+# SharedKeyCrypto.prepareKey() asks the native getEncryptionKey() for slot 17
+# (slot 16 when the device's encryptionKeySize is 8; dyw47's is 16), not the
+# device's own legacy type. libogg.so's nvUqFH3a() special-cases slots 16/17
+# to copy a fixed 16-byte constant (0xb19d0/0xb19e0 in the arm64 build); this
+# is slot 17's constant with the same +i ramp salt as the tables above
+# applied. It is byte-identical to PAIRING_KEYS[19] -- the memory dump these
+# tables came from appears to have indexed the same constants as 18/19.
+# Confirmed live against a firmware-8 dyw47.
+SHARED_ENCRYPTION_KEY: bytes = bytes.fromhex("39820b133965f6dc3155babd39a6407b")

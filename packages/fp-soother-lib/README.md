@@ -26,6 +26,21 @@ asyncio.run(main())
 
 If `address` is omitted, `SootherClient.connect()` scans for the first soother found.
 
+### Firmware versions
+
+The client reads the device's firmware version when it connects and picks the
+matching crypto mode.
+
+Firmware 9 and newer use a per-device session key from `pair()`, and the
+device must be in its own pairing mode while you pair. Save `session_key` and
+pass it back on later connects.
+
+Firmware 8 and older use a static shared key and a different byte layout.
+These devices need no pairing. The client sets the key on connect
+(`uses_shared_key` is `True`), and `pair()` only syncs the device clock.
+
+Tested against real firmware 8 and firmware 11 devices.
+
 ### Host-managed discovery (e.g. Home Assistant)
 
 A host that owns its own BLE scanner (Home Assistant's `bluetooth` integration

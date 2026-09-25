@@ -32,6 +32,7 @@ from .constants import (
     STATE_ATTRS,
     STATE_BYTE_LENGTH,
 )
+from .encryption import change_cmd_auth_key_from_raw_state
 
 # ── Bit helpers ──────────────────────────────────────────────────────────────
 
@@ -223,59 +224,91 @@ def decode_infra_state(raw: bytes | bytearray, state: SootherState) -> None:
 
 # ── Command frame construction ───────────────────────────────────────────────
 #
-# Every command is a 16-byte plaintext frame with three rolling-token bytes
-# and, for simple attribute commands, a value + command-id byte. The FULL
-# frame (not a short logical payload) is what encryption.encrypt_command()
-# expects -- these functions produce it directly.
+# Every command starts as a logical payload -- pt[0] = command_id, then the
+# command's value bytes (SmartCommand.getBytes() in the real app) -- that
+# frame_command() scrambles together with three rolling-token
+# (changeCmdAuthKey) bytes from the most recent raw CHAR_STATE read into the
+# final 16-byte frame encryption.encrypt_command() expects.
 
 
-def build_state_command(command_id: int, value: int, prev_raw_state: bytes) -> bytes:
+def frame_command(
+    pt: bytes | bytearray, prev_raw_state: bytes, *, shared_key: bool = False
+) -> bytes:
     """
-    Build the 16-byte plaintext for a simple attribute-set command.
+    Scramble logical payload *pt* (up to 12 bytes, zero-padded) and the
+    changeCmdAuthKey derived from *prev_raw_state* into a 16-byte command
+    frame, exactly as the native encrypt core (SmartCrypto's encrypt, 16-byte
+    key) does. The unique-key layout is the one every build_*_command() has
+    always produced; the shared-key (*shared_key*, firmware < 9) layout is
+    that function's other branch, read from its arm64 disassembly and
+    confirmed live against a firmware-8 dyw47.
+    """
+    if len(pt) > 12:
+        raise ValueError("pt must be at most 12 bytes")
+    p = bytes(pt).ljust(12, b"\0")
+    c0, c1, c2 = change_cmd_auth_key_from_raw_state(
+        prev_raw_state, shared_key=shared_key
+    )[:3]
+    if shared_key:
+        return bytes(
+            [p[8], c1, p[7], p[11], c2, c0, p[6], p[1],
+             p[5], c0 ^ c2, p[3], p[10], p[9], p[4], p[0], p[2]]
+        )  # fmt: skip
+    return bytes(
+        [p[2], c2, p[7], p[10], c1, c0, p[6], p[3],
+         p[11], p[6] ^ c1, p[4], p[1], p[8], p[0], p[5], p[9]]
+    )  # fmt: skip
 
-    Three bytes from the most recently read (raw, pre-descramble) CHAR_STATE
-    are embedded as replay-protection rolling tokens:
+
+def build_state_command(
+    command_id: int, value: int, prev_raw_state: bytes, *, shared_key: bool = False
+) -> bytes:
+    """
+    Build the 16-byte plaintext for a simple attribute-set command: logical
+    payload [command_id, value]. For a unique-key device, three bytes from
+    the most recently read (raw, pre-descramble) CHAR_STATE are embedded as
+    replay-protection rolling tokens:
       cmd[1] = prev_raw_state[4]
       cmd[4] = prev_raw_state[15]
       cmd[5] = prev_raw_state[6]
       cmd[9] = prev_raw_state[15]  (repeated)
       cmd[11] = value
       cmd[13] = command_id
-    All other bytes are 0x00.
+    All other bytes are 0x00. See frame_command() for the shared-key layout.
     """
-    cmd = bytearray(16)
-    cmd[1] = prev_raw_state[4]
-    cmd[4] = prev_raw_state[15]
-    cmd[5] = prev_raw_state[6]
-    cmd[9] = prev_raw_state[15]
-    cmd[11] = value & 0xFF
-    cmd[13] = command_id & 0xFF
-    return bytes(cmd)
+    return frame_command(
+        bytes([command_id & 0xFF, value & 0xFF]), prev_raw_state, shared_key=shared_key
+    )
 
 
 def build_custom_color_sequence_command(
-    color0: int, color1: int, color2: int, prev_raw_state: bytes
+    color0: int,
+    color1: int,
+    color2: int,
+    prev_raw_state: bytes,
+    *,
+    shared_key: bool = False,
 ) -> bytes:
     """Pack 3 custom sequence colors (3 bits each) into command ID 9."""
     # 9-bit packed value: color0 | (color1 << 3) | (color2 << 6)
     value_low = (color0 & 0x7) | ((color1 & 0x7) << 3) | ((color2 & 0x3) << 6)
     value_high = (color2 >> 2) & 0x1
 
-    cmd = bytearray(16)
-    cmd[1] = prev_raw_state[4]
-    cmd[4] = prev_raw_state[15]
-    cmd[5] = prev_raw_state[6]
-    cmd[9] = prev_raw_state[15]
-    cmd[11] = value_low
-    cmd[12] = value_high
-    cmd[13] = CMD_PROJECTOR_CUSTOM_SEQUENCE
-    return bytes(cmd)
+    pt = bytearray(12)
+    pt[0] = CMD_PROJECTOR_CUSTOM_SEQUENCE
+    pt[1] = value_low
+    # pt[8] lands at frame byte 12 in the unique-key layout, where this
+    # command has always placed value_high.
+    pt[8] = value_high
+    return frame_command(pt, prev_raw_state, shared_key=shared_key)
 
 
 def build_rtc_update_command(
     prev_raw_state: bytes,
     weekday: int | None = None,
     total_seconds: int | None = None,
+    *,
+    shared_key: bool = False,
 ) -> bytes:
     """
     Build the 16-byte plaintext for the rtcUpdate (clock-sync) command.
@@ -299,27 +332,26 @@ def build_rtc_update_command(
     byte_mid = (total_seconds >> 16) & 0xFF
     byte_low = (total_seconds >> 8) & 0xFF
 
-    cmd = bytearray(16)
-    cmd[1] = prev_raw_state[4]
-    cmd[4] = prev_raw_state[15]
-    cmd[5] = prev_raw_state[6]
-    cmd[9] = prev_raw_state[15]
-    cmd[0] = (byte_mid & 0x1F) << 3
-    cmd[7] = (byte_low & 0x1F) << 3
-    cmd[10] = (byte_low >> 5) & 0x07
-    cmd[11] = weekday & 0x07
-    cmd[13] = RTC_UPDATE_COMMAND_ID
-    # Bytes 3, 8, 12, 15: confirmed NOT to matter for firmware acceptance
-    # (live-tested with these exact placeholder values and with the real
-    # app's own differing values at the same positions -- both worked).
-    cmd[3] = 0x94
-    cmd[8] = 0x01
-    cmd[12] = 0x88
-    cmd[15] = 0x05
-    return bytes(cmd)
+    pt = bytearray(12)
+    pt[0] = RTC_UPDATE_COMMAND_ID
+    pt[1] = weekday & 0x07
+    pt[2] = (byte_mid & 0x1F) << 3
+    pt[3] = (byte_low & 0x1F) << 3
+    pt[4] = (byte_low >> 5) & 0x07
+    # pt[8:12] (unique-key frame bytes 12, 15, 3, 8): confirmed NOT to matter
+    # for firmware acceptance (live-tested with these exact placeholder
+    # values and with the real app's own differing values at the same
+    # positions -- both worked).
+    pt[8] = 0x88
+    pt[9] = 0x05
+    pt[10] = 0x94
+    pt[11] = 0x01
+    return frame_command(pt, prev_raw_state, shared_key=shared_key)
 
 
-def build_preset_command(state: SootherState, prev_raw_state: bytes) -> bytes:
+def build_preset_command(
+    state: SootherState, prev_raw_state: bytes, *, shared_key: bool = False
+) -> bytes:
     """
     Build the 16-byte plaintext CMD_PRESET (22) composite command, which
     applies EVERY settable attribute in *state* in a single write -- this is
@@ -365,6 +397,12 @@ def build_preset_command(state: SootherState, prev_raw_state: bytes) -> bytes:
     is_valid_state_decrypt() checks on reads (raw[10] == raw[15] ^ raw[4]) --
     plausible if the device applies the same checksum symmetrically to
     writes, but not confirmed, and not what build_state_command() does.
+    (The native encrypt core's disassembly, read later, shows out[15] =
+    pt[9], i.e. 0x00 here; the override is kept pending a live test.)
+
+    With *shared_key*, the frame is frame_command()'s shared-key layout
+    unmodified -- the out[15] override above is specific to the unique-key
+    layout's checksum positions.
     """
     packed = bytearray(PRESET_BYTE_LENGTH)
     attr_map_inv = {v: k for k, v in state._ATTR_MAP.items()}
@@ -375,31 +413,12 @@ def build_preset_command(state: SootherState, prev_raw_state: bytes) -> bytes:
             val = getattr(state, field_obj.name) or 0
             _set_bits(packed, bi, bit_i, length, val)
 
-    pt = bytearray(16)
+    pt = bytearray(12)
     pt[0] = CMD_PRESET
     pt[1 : 1 + PRESET_BYTE_LENGTH] = packed
-    # pt[9:16] stay zero -- out-of-bounds positions for this 9-byte logical
+    # pt[9:12] stay zero -- out-of-bounds positions for this 9-byte logical
     # command, see docstring.
-
-    cak0 = prev_raw_state[6]
-    cak1 = prev_raw_state[15]
-    cak2 = prev_raw_state[4]
-
-    out = bytearray(16)
-    out[0] = pt[2]
-    out[1] = cak2
-    out[2] = pt[7]
-    out[3] = pt[10]
-    out[4] = cak1
-    out[5] = cak0
-    out[6] = pt[6]
-    out[7] = pt[3]
-    out[8] = pt[11]
-    out[9] = pt[6] ^ cak1
-    out[10] = pt[4]
-    out[11] = pt[1]
-    out[12] = pt[8]
-    out[13] = pt[0]
-    out[14] = pt[5]
-    out[15] = out[10] ^ out[4]
+    out = bytearray(frame_command(pt, prev_raw_state, shared_key=shared_key))
+    if not shared_key:
+        out[15] = out[10] ^ out[4]
     return bytes(out)
