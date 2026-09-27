@@ -69,6 +69,7 @@ Run everything from the repo root:
 - `uv run fp-soother-cli --help` — sanity-check the CLI entry point
 - `uv run fp-soother-web` — run the FastAPI web UI (uvicorn)
 - `uv run --package fp-soother-lib pytest packages/fp-soother-lib/tests` — run the `fp-soother-lib` test suite (pure crypto/protocol logic + a few `SootherClient` behavior tests; no real BLE hardware needed)
+- `scripts/release <package> <major|minor|patch|stable|alpha|beta|rc|post|dev>` — release one workspace package (e.g. `scripts/release fp-soother-lib patch`). Requires a clean working tree. Bumps the version with `uv version --package`, commits `packages/<package>/pyproject.toml` and `uv.lock` as `chore(<package>): release v<version>`, and creates a signed tag `<package>/v<version>` (e.g. `fp-soother-lib/v1.0.3`). Push with `git push --follow-tags`. The pushed tag triggers `.github/workflows/release.yml`, which runs the checks in `.github/workflows/ci.yml` (format check, lint, type-check, and the `fp-soother-lib` tests) and builds and publishes to PyPI only if they pass. After publishing, it creates a GitHub release for the tag with the built distributions attached and notes generated from merged PRs since the package's previous tag. Only stable `fp-soother-lib` releases are marked as the repo's latest release.
 
 Useful CLI subcommands during manual verification (all take a BLE address, or omit it to auto-scan for the first soother found):
 

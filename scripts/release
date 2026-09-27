@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+packages=()
+for dir in packages/*/; do
+  packages+=("$(basename "$dir")")
+done
+
+usage() {
+  echo "Usage: $0 <package> <major|minor|patch|stable|alpha|beta|rc|post|dev>" >&2
+  echo "Packages: ${packages[*]}" >&2
+  exit 1
+}
+
+if [[ $# -ne 2 ]]; then
+  usage
+fi
+
+package="$1"
+bump="$2"
+
+if [[ ! -f "packages/${package}/pyproject.toml" ]]; then
+  echo "Unknown package: ${package}" >&2
+  usage
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "Working tree is not clean; commit or stash changes first." >&2
+  exit 1
+fi
+
+version="$(uv version --package "$package" --bump "$bump" --short)"
+tag="${package}/v${version}"
+
+if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+  echo "Tag ${tag} already exists." >&2
+  git checkout -- "packages/${package}/pyproject.toml" uv.lock
+  exit 1
+fi
+
+git add "packages/${package}/pyproject.toml" uv.lock
+git commit -m "chore(${package}): release v${version}"
+git tag -s "$tag" -m "$tag"
+
+echo "Released ${tag}. Push with: git push --follow-tags"
